@@ -37,6 +37,10 @@ This project currently targets only:
 - ESP32-S3R8 with 8 MB PSRAM and 16 MB flash
 - 3.5-inch 320×480 ST7796 SPI display
 
+[Buy the exact Waveshare ESP32-S3-Touch-LCD-3.5 board on Amazon](https://amzn.to/4fVmvU4) *(affiliate link)*
+
+> **Affiliate disclosure:** As an Amazon Associate I earn from qualifying purchases. If you purchase through this link, The Custom Corner may receive a commission at no additional cost to you.
+
 The LCD reset signal is controlled through the onboard TCA9554 I/O expander. Sketches intended for similar-looking ESP32-S3 displays will not necessarily work on this board.
 
 ## Tested software versions
