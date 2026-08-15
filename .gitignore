@@ -11,3 +11,8 @@ build/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local Python environment and cache
+.venv/
+__pycache__/
+*.pyc

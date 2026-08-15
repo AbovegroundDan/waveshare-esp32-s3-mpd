@@ -138,9 +138,20 @@ applications/
         └── secrets.example.h
 licenses/
 └── StarGuard-font-notice.txt
+tools/
+└── font-converter/
+    ├── convert_font.py
+    ├── README.md
+    └── requirements.txt
 ```
 
 Future applications will receive their own folders under `applications/`. Display themes and shared code will be separated when a second application or theme makes that abstraction useful; the first public version intentionally keeps the working weather sketch easy to open and understand.
+
+## Change the interface fonts
+
+The checked-in `MPDAAFonts.h` was generated from desktop font files rather than written by hand. A reusable converter and complete Windows instructions are available in [`tools/font-converter`](tools/font-converter/README.md).
+
+The converter accepts TTF or OTF files, creates the four required anti-aliased font sizes, and replaces the weather application's generated font header. Font widths differ, so compile and inspect the physical display after every font change.
 
 ## Current scope
 
