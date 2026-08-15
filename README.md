@@ -1,6 +1,6 @@
 # MPD 1.0 — Multi-Purpose Display
 
-MPD is a beginner-friendly information display project from **The Custom Corner**, built for the exact **Waveshare ESP32-S3-Touch-LCD-3.5** board.
+MPD is a beginner-friendly information display project from [**The Custom Corner**](https://www.youtube.com/@TheCustomCorner101), built for the exact **Waveshare ESP32-S3-Touch-LCD-3.5** board.
 
 The repository will eventually contain several independent display applications, such as weather, stock information, and YouTube statistics. Only the tested weather application is included right now.
 
