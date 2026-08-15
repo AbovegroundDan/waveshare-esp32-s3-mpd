@@ -6,6 +6,7 @@
 #include <Wire.h>
 #include <time.h>
 #include "TCA9554.h"
+#include "LocationConfig.h"
 #include "MPDAAFonts.h"
 #include "TCCLogo46px.h"
 #include "secrets.h"
@@ -25,26 +26,10 @@
 #define I2C_SDA 8
 #define I2C_SCL 7
 
-constexpr float WEATHER_LATITUDE = 40.7128;
-constexpr float WEATHER_LONGITUDE = -74.0060;
-constexpr char WEATHER_LOCATION[] = "NEW YORK, NY";
-
-constexpr char WEATHER_URL[] =
-  "https://api.open-meteo.com/v1/forecast"
-  "?latitude=40.7128"
-  "&longitude=-74.0060"
-  "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m"
-  "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
-  "&temperature_unit=fahrenheit"
-  "&wind_speed_unit=mph"
-  "&timezone=America%2FNew_York"
-  "&forecast_days=1";
-
 constexpr unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 constexpr unsigned long WEATHER_REFRESH_INTERVAL_MS = 15UL * 60UL * 1000UL;
 constexpr unsigned long WEATHER_RETRY_INTERVAL_MS = 60UL * 1000UL;
 
-constexpr char NEW_YORK_TIME_ZONE[] = "EST5EDT,M3.2.0/2,M11.1.0/2";
 constexpr char NTP_SERVER_1[] = "pool.ntp.org";
 constexpr char NTP_SERVER_2[] = "time.nist.gov";
 
@@ -87,6 +72,7 @@ unsigned long lastConnectionAttempt = 0;
 unsigned long lastWeatherAttempt = 0;
 unsigned long weatherAttemptInterval = WEATHER_RETRY_INTERVAL_MS;
 bool clockConfigured = false;
+int32_t configuredUtcOffsetSeconds = INT32_MIN;
 unsigned long lastHeaderClockRefresh = 0;
 char lastHeaderClock[12] = "";
 uint16_t aaTextBuffer[AA_TEXT_BUFFER_WIDTH * AA_TEXT_BUFFER_HEIGHT];
@@ -113,6 +99,27 @@ void stopWithError(const char* message) {
   while (true) {
     delay(1000);
   }
+}
+
+bool buildWeatherUrl(char* destination, size_t destinationSize) {
+  int charactersWritten = snprintf(
+    destination,
+    destinationSize,
+    "https://api.open-meteo.com/v1/forecast"
+    "?latitude=%.6f"
+    "&longitude=%.6f"
+    "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m"
+    "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+    "&temperature_unit=fahrenheit"
+    "&wind_speed_unit=mph"
+    "&timezone=auto"
+    "&forecast_days=1",
+    WEATHER_LATITUDE,
+    WEATHER_LONGITUDE
+  );
+
+  return charactersWritten > 0 &&
+         static_cast<size_t>(charactersWritten) < destinationSize;
 }
 
 MPDAAGlyph readAAGlyph(const MPDAAFont& font, uint8_t character) {
@@ -394,17 +401,18 @@ void showStatus(const char* title, const char* detail, uint16_t color) {
   gfx->fillRoundRect(366, 224, 96, 18, 9, LCARS_SALMON);
 }
 
-void configureLocalClock() {
-  if (clockConfigured) {
+void configureLocalClock(int32_t utcOffsetSeconds) {
+  if (clockConfigured && utcOffsetSeconds == configuredUtcOffsetSeconds) {
     return;
   }
 
-  configTzTime(NEW_YORK_TIME_ZONE, NTP_SERVER_1, NTP_SERVER_2);
+  configTime(utcOffsetSeconds, 0, NTP_SERVER_1, NTP_SERVER_2);
   clockConfigured = true;
+  configuredUtcOffsetSeconds = utcOffsetSeconds;
 
   struct tm timeInfo;
   if (getLocalTime(&timeInfo, 10000)) {
-    Serial.println("New York clock synchronized");
+    Serial.printf("Local clock synchronized at UTC%+.1f hours\n", utcOffsetSeconds / 3600.0f);
   } else {
     Serial.println("WARNING: NTP time is not available yet");
   }
@@ -465,10 +473,8 @@ bool connectToWiFi() {
     return false;
   }
 
-  configureLocalClock();
-
   String ipAddress = WiFi.localIP().toString();
-  showStatus("WI-FI CONNECTED", "REQUESTING NEW YORK WEATHER...", LCARS_BLUE);
+  showStatus("WI-FI CONNECTED", "REQUESTING LOCAL WEATHER...", LCARS_BLUE);
   Serial.printf("Connected. IP address: %s\n", ipAddress.c_str());
   return true;
 }
@@ -603,7 +609,16 @@ bool fetchAndDisplayWeather() {
   http.setConnectTimeout(10000);
   http.setTimeout(10000);
 
-  if (!http.begin(secureClient, WEATHER_URL)) {
+  char weatherUrl[512];
+  if (!buildWeatherUrl(weatherUrl, sizeof(weatherUrl))) {
+    showStatus("WEATHER ERROR", "THE GENERATED REQUEST URL IS TOO LONG.", LCARS_RED);
+    Serial.println("ERROR: Weather URL did not fit in the request buffer");
+    return false;
+  }
+
+  Serial.printf("Weather location: %s (%.6f, %.6f)\n", WEATHER_LOCATION, WEATHER_LATITUDE, WEATHER_LONGITUDE);
+
+  if (!http.begin(secureClient, weatherUrl)) {
     showStatus("WEATHER ERROR", "COULD NOT START HTTPS REQUEST.", LCARS_RED);
     Serial.println("ERROR: HTTPClient begin failed");
     return false;
@@ -643,6 +658,11 @@ bool fetchAndDisplayWeather() {
     Serial.println("ERROR: Required JSON objects are missing");
     return false;
   }
+
+  int32_t utcOffsetSeconds = document["utc_offset_seconds"] | 0;
+  String resolvedTimezone = document["timezone"] | "Unknown";
+  configureLocalClock(utcOffsetSeconds);
+  Serial.printf("Open-Meteo timezone: %s\n", resolvedTimezone.c_str());
 
   float temperature = current["temperature_2m"].as<float>();
   float apparentTemperature = current["apparent_temperature"].as<float>();
