@@ -162,8 +162,6 @@ The converter accepts TTF or OTF files, creates the four required anti-aliased f
 - Weather is the only application currently included.
 - The default location is New York, NY; it can be changed in `LocationConfig.h`.
 - Touch input is not used by the weather application yet.
-- Stock and YouTube-stat applications are planned but not included.
-- Additional themes are planned but not included.
 
 ## Licenses
 
