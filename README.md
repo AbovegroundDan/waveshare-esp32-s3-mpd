@@ -8,7 +8,7 @@ The repository will eventually contain several independent display applications,
 
 ### Weather
 
-The current application retrieves New York City weather from [Open-Meteo](https://open-meteo.com/) and displays:
+The current application retrieves weather from [Open-Meteo](https://open-meteo.com/) and displays:
 
 - Current temperature and conditions
 - Feels-like temperature
@@ -17,9 +17,9 @@ The current application retrieves New York City weather from [Open-Meteo](https:
 - Wind speed
 - Precipitation probability
 - Last-checked time
-- A live New York clock
+- A live clock for the configured location
 
-Open-Meteo does not require an API key. The current interface uses an LCARS-inspired theme and is fixed to New York, NY.
+Open-Meteo does not require an API key. The current interface uses an LCARS-inspired theme and defaults to New York, NY.
 
 Application folder:
 
@@ -70,6 +70,24 @@ Do not use the Arduino_GFX 1.5.5 copy bundled in Waveshare's original package wi
 
 Close and reopen the sketch if Arduino IDE does not immediately show the new `secrets.h` tab. The real secrets file is ignored by Git and must never be committed.
 
+## Change the weather location
+
+Open [`LocationConfig.h`](applications/weather/MPD_Weather/LocationConfig.h). It contains the only three location values that normally need to be changed:
+
+```cpp
+constexpr char WEATHER_LOCATION[] = "NEW YORK, NY";
+constexpr float WEATHER_LATITUDE = 40.7128f;
+constexpr float WEATHER_LONGITUDE = -74.0060f;
+```
+
+1. Find the desired city with the [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api).
+2. Copy its `latitude` and `longitude` into `WEATHER_LATITUDE` and `WEATHER_LONGITUDE`.
+3. Change `WEATHER_LOCATION` to the uppercase label that should appear in the title bar.
+4. Keep the label fairly short. Abbreviate long place names so they fit beside the title and clock.
+5. Verify and upload the sketch again.
+
+The weather request is generated automatically from these coordinates. It uses Open-Meteo's `timezone=auto` option, and the returned UTC offset sets the display clock for the selected location. No separate timezone setting is required.
+
 ## Arduino board configuration
 
 Select **ESP32S3 Dev Module**, then use:
@@ -114,6 +132,7 @@ applications/
 └── weather/
     └── MPD_Weather/
         ├── MPD_Weather.ino
+        ├── LocationConfig.h
         ├── MPDAAFonts.h
         ├── TCCLogo46px.h
         └── secrets.example.h
@@ -126,7 +145,7 @@ Future applications will receive their own folders under `applications/`. Displa
 ## Current scope
 
 - Weather is the only application currently included.
-- Location is currently fixed to New York, NY.
+- The default location is New York, NY; it can be changed in `LocationConfig.h`.
 - Touch input is not used by the weather application yet.
 - Stock and YouTube-stat applications are planned but not included.
 - Additional themes are planned but not included.
@@ -134,5 +153,7 @@ Future applications will receive their own folders under `applications/`. Displa
 ## Licenses
 
 The source code is released under the [MIT License](LICENSE).
+
+MIT remains a good fit for the project code because it allows viewers to use, copy, modify, and redistribute the software. It cannot relicense third-party assets, so those retain their original or separate terms.
 
 The generated Star Guard font data and The Custom Corner logo have separate terms and are not covered by the MIT license. See [ASSET_LICENSES.md](ASSET_LICENSES.md) and the original [Star Guard font notice](licenses/StarGuard-font-notice.txt) before redistributing or using those assets commercially.
