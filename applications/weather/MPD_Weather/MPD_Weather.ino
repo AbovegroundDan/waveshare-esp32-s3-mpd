@@ -48,6 +48,12 @@ constexpr int16_t HEADER_CLOCK_X = 202;
 constexpr int16_t HEADER_CLOCK_Y = 4;
 constexpr int16_t HEADER_CLOCK_WIDTH = 140;
 constexpr int16_t HEADER_CLOCK_HEIGHT = 44;
+constexpr uint16_t SCREENSHOT_WIDTH = 480;
+constexpr uint16_t SCREENSHOT_HEIGHT = 320;
+constexpr size_t SCREENSHOT_BYTE_COUNT =
+  static_cast<size_t>(SCREENSHOT_WIDTH) * SCREENSHOT_HEIGHT * sizeof(uint16_t);
+constexpr size_t SCREENSHOT_SERIAL_CHUNK_SIZE = 4096;
+constexpr char SCREENSHOT_COMMAND[] = "MPD_SCREENSHOT";
 
 TCA9554 TCA(0x20);
 
@@ -59,7 +65,7 @@ Arduino_DataBus* bus = new Arduino_ESP32SPI(
   SPI_MISO
 );
 
-Arduino_ST7796* gfx = new Arduino_ST7796(
+Arduino_ST7796* display = new Arduino_ST7796(
   bus,
   LCD_RST,
   1,
@@ -67,6 +73,7 @@ Arduino_ST7796* gfx = new Arduino_ST7796(
   LCD_HOR_RES,
   LCD_VER_RES
 );
+Arduino_GFX* gfx = display;
 
 unsigned long lastConnectionAttempt = 0;
 unsigned long lastWeatherAttempt = 0;
@@ -76,6 +83,23 @@ int32_t configuredUtcOffsetSeconds = INT32_MIN;
 unsigned long lastHeaderClockRefresh = 0;
 char lastHeaderClock[12] = "";
 uint16_t aaTextBuffer[AA_TEXT_BUFFER_WIDTH * AA_TEXT_BUFFER_HEIGHT];
+char serialCommandBuffer[32] = "";
+size_t serialCommandLength = 0;
+
+struct WeatherSnapshot {
+  bool valid = false;
+  float temperature = 0;
+  float apparentTemperature = 0;
+  int humidity = 0;
+  int weatherCode = 0;
+  float windSpeed = 0;
+  float highTemperature = 0;
+  float lowTemperature = 0;
+  int rainChance = 0;
+  char lastCheckedTime[16] = "--:--";
+};
+
+WeatherSnapshot latestWeather;
 
 struct AATextBounds {
   int16_t left;
@@ -507,7 +531,7 @@ void drawWeatherScreen(
   float highTemperature,
   float lowTemperature,
   int rainChance,
-  const String& lastCheckedTime
+  const char* lastCheckedTime
 ) {
   drawHeader();
 
@@ -582,7 +606,7 @@ void drawWeatherScreen(
     lastCheckedText,
     sizeof(lastCheckedText),
     "LAST CHECKED AT %s",
-    lastCheckedTime.c_str()
+    lastCheckedTime
   );
   drawAAText(
     MPDFontSmallAA,
@@ -592,6 +616,144 @@ void drawWeatherScreen(
     LCARS_WHITE,
     LCARS_BLACK
   );
+}
+
+uint32_t calculateScreenshotCrc32(const uint8_t* data, size_t length) {
+  uint32_t crc = 0xFFFFFFFFu;
+
+  for (size_t index = 0; index < length; ++index) {
+    crc ^= data[index];
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+      uint32_t mask = 0u - (crc & 1u);
+      crc = (crc >> 1) ^ (0xEDB88320u & mask);
+    }
+  }
+
+  return ~crc;
+}
+
+void writeScreenshotBytes(const uint8_t* data, size_t length) {
+  size_t offset = 0;
+
+  while (offset < length) {
+    size_t bytesRemaining = length - offset;
+    size_t chunkSize = min(bytesRemaining, SCREENSHOT_SERIAL_CHUNK_SIZE);
+    size_t bytesWritten = Serial.write(data + offset, chunkSize);
+
+    if (bytesWritten == 0) {
+      delay(1);
+      continue;
+    }
+
+    offset += bytesWritten;
+    yield();
+  }
+}
+
+void streamScreenshot() {
+  if (!latestWeather.valid) {
+    Serial.println("MPD_SCREENSHOT_ERROR NO_WEATHER_DATA");
+    return;
+  }
+
+  Serial.println("Screenshot request received");
+  Serial.printf("Free PSRAM before capture: %u bytes\n", ESP.getFreePsram());
+
+  Arduino_Canvas* screenshotCanvas = new Arduino_Canvas(
+    SCREENSHOT_WIDTH,
+    SCREENSHOT_HEIGHT,
+    nullptr
+  );
+
+  if (screenshotCanvas == nullptr || !screenshotCanvas->begin(GFX_SKIP_OUTPUT_BEGIN)) {
+    delete screenshotCanvas;
+    Serial.println("MPD_SCREENSHOT_ERROR FRAMEBUFFER_ALLOCATION_FAILED");
+    return;
+  }
+
+  Arduino_GFX* normalDisplayTarget = gfx;
+  gfx = screenshotCanvas;
+  drawWeatherScreen(
+    latestWeather.temperature,
+    latestWeather.apparentTemperature,
+    latestWeather.humidity,
+    latestWeather.weatherCode,
+    latestWeather.windSpeed,
+    latestWeather.highTemperature,
+    latestWeather.lowTemperature,
+    latestWeather.rainChance,
+    latestWeather.lastCheckedTime
+  );
+  gfx = normalDisplayTarget;
+
+  uint8_t* framebufferBytes = reinterpret_cast<uint8_t*>(
+    screenshotCanvas->getFramebuffer()
+  );
+  uint32_t checksum = calculateScreenshotCrc32(
+    framebufferBytes,
+    SCREENSHOT_BYTE_COUNT
+  );
+
+  Serial.flush();
+  Serial.println("MPD_SCREENSHOT_BEGIN 1");
+  Serial.printf("WIDTH %u\n", SCREENSHOT_WIDTH);
+  Serial.printf("HEIGHT %u\n", SCREENSHOT_HEIGHT);
+  Serial.println("FORMAT RGB565_LE");
+  Serial.printf("LENGTH %u\n", static_cast<unsigned int>(SCREENSHOT_BYTE_COUNT));
+  Serial.printf("CRC32 %08lX\n", static_cast<unsigned long>(checksum));
+  Serial.println("DATA");
+  Serial.flush();
+
+  writeScreenshotBytes(framebufferBytes, SCREENSHOT_BYTE_COUNT);
+  Serial.print("\nMPD_SCREENSHOT_END\n");
+  Serial.flush();
+
+  delete screenshotCanvas;
+
+  // Rendering the off-screen header updates the clock bookkeeping. Force the
+  // physical title bar to catch up before normal loop processing resumes.
+  lastHeaderClock[0] = '\0';
+  lastHeaderClockRefresh = 0;
+  updateHeaderClock(true);
+
+  Serial.printf("Free PSRAM after capture: %u bytes\n", ESP.getFreePsram());
+  Serial.println("Screenshot transfer completed");
+}
+
+void handleSerialCommand(const char* command) {
+  if (strcmp(command, SCREENSHOT_COMMAND) == 0) {
+    streamScreenshot();
+  } else if (command[0] != '\0') {
+    Serial.printf("Unknown command: %s\n", command);
+  }
+}
+
+void pollSerialCommands() {
+  while (Serial.available() > 0) {
+    char character = static_cast<char>(Serial.read());
+
+    if (character == '\r') {
+      continue;
+    }
+
+    if (character == '\n') {
+      serialCommandBuffer[serialCommandLength] = '\0';
+      handleSerialCommand(serialCommandBuffer);
+      serialCommandLength = 0;
+      serialCommandBuffer[0] = '\0';
+      continue;
+    }
+
+    if (character >= 0x20 && character <= 0x7E) {
+      if (serialCommandLength < sizeof(serialCommandBuffer) - 1) {
+        serialCommandBuffer[serialCommandLength++] = character;
+      } else {
+        serialCommandLength = 0;
+        serialCommandBuffer[0] = '\0';
+        Serial.println("Serial command was too long and was discarded");
+      }
+    }
+  }
 }
 
 bool fetchAndDisplayWeather() {
@@ -679,16 +841,32 @@ bool fetchAndDisplayWeather() {
   Serial.printf("Open-Meteo observation time: %s\n", observationTime.c_str());
   Serial.printf("Last checked at %s\n", lastCheckedTime.c_str());
 
+  latestWeather.temperature = temperature;
+  latestWeather.apparentTemperature = apparentTemperature;
+  latestWeather.humidity = humidity;
+  latestWeather.weatherCode = weatherCode;
+  latestWeather.windSpeed = windSpeed;
+  latestWeather.highTemperature = highTemperature;
+  latestWeather.lowTemperature = lowTemperature;
+  latestWeather.rainChance = rainChance;
+  snprintf(
+    latestWeather.lastCheckedTime,
+    sizeof(latestWeather.lastCheckedTime),
+    "%s",
+    lastCheckedTime.c_str()
+  );
+  latestWeather.valid = true;
+
   drawWeatherScreen(
-    temperature,
-    apparentTemperature,
-    humidity,
-    weatherCode,
-    windSpeed,
-    highTemperature,
-    lowTemperature,
-    rainChance,
-    lastCheckedTime
+    latestWeather.temperature,
+    latestWeather.apparentTemperature,
+    latestWeather.humidity,
+    latestWeather.weatherCode,
+    latestWeather.windSpeed,
+    latestWeather.highTemperature,
+    latestWeather.lowTemperature,
+    latestWeather.rainChance,
+    latestWeather.lastCheckedTime
   );
 
   Serial.println("Weather data parsed and displayed");
@@ -722,7 +900,7 @@ void setup() {
 
   lcdReset();
 
-  if (!gfx->begin(40000000, SPI_MODE0)) {
+  if (!display->begin(40000000, SPI_MODE0)) {
     stopWithError("ERROR: Display initialization failed");
   }
 
@@ -734,6 +912,8 @@ void setup() {
 }
 
 void loop() {
+  pollSerialCommands();
+
   if (WiFi.status() != WL_CONNECTED) {
     if (millis() - lastConnectionAttempt >= WIFI_RETRY_INTERVAL_MS) {
       if (connectToWiFi()) {
