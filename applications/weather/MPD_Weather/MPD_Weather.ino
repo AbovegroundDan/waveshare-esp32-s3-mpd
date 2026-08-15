@@ -314,7 +314,7 @@ void updateHeaderClock(bool force = false) {
     LCARS_ORANGE
   );
   drawAACenteredInRect(
-    StarGuardItalic36AA,
+    MPDFontMediumAA,
     clockText,
     HEADER_CLOCK_X,
     HEADER_CLOCK_Y,
@@ -336,7 +336,7 @@ void drawMetricPill(
 ) {
   gfx->fillRoundRect(x, y, width, height, 12, color);
   drawAACenteredInRect(
-    StarGuardRegular26AA,
+    MPDFontHeaderAA,
     text,
     x,
     y,
@@ -361,7 +361,7 @@ void drawHeader() {
     12, 3, TCCLogo46pxPixels, TCCLogo46pxMask, TCC_LOGO_WIDTH, TCC_LOGO_HEIGHT);
 
   drawAAText(
-    StarGuardRegular26AA,
+    MPDFontHeaderAA,
     "MPD WEATHER",
     70,
     35,
@@ -369,7 +369,7 @@ void drawHeader() {
     LCARS_ORANGE
   );
   drawAARightAligned(
-    StarGuardRegular26AA,
+    MPDFontHeaderAA,
     WEATHER_LOCATION,
     458,
     35,
@@ -384,7 +384,7 @@ void showStatus(const char* title, const char* detail, uint16_t color) {
 
   gfx->fillRoundRect(74, 92, 390, 58, 20, color);
   drawAACenteredInRect(
-    StarGuardItalic36AA,
+    MPDFontMediumAA,
     title,
     74,
     92,
@@ -394,7 +394,7 @@ void showStatus(const char* title, const char* detail, uint16_t color) {
     color
   );
 
-  drawAAText(StarGuardRegular20AA, detail, 80, 186, LCARS_WHITE, LCARS_BLACK);
+  drawAAText(MPDFontSmallAA, detail, 80, 186, LCARS_WHITE, LCARS_BLACK);
 
   gfx->fillRoundRect(80, 224, 100, 18, 9, LCARS_LAVENDER);
   gfx->fillRoundRect(188, 224, 170, 18, 9, LCARS_BLUE);
@@ -513,7 +513,7 @@ void drawWeatherScreen(
 
   gfx->drawRoundRect(70, 66, 178, 104, 18, LCARS_BLUE);
   drawAAText(
-    StarGuardRegular20AA,
+    MPDFontSmallAA,
     "TEMPERATURE",
     84,
     88,
@@ -524,7 +524,7 @@ void drawWeatherScreen(
   char temperatureText[16];
   snprintf(temperatureText, sizeof(temperatureText), "%.0f F", temperature);
   drawAAText(
-    StarGuardItalic54AA,
+    MPDFontLargeAA,
     temperatureText,
     82,
     156,
@@ -533,7 +533,7 @@ void drawWeatherScreen(
   );
 
   drawAAText(
-    StarGuardRegular20AA,
+    MPDFontSmallAA,
     "CURRENT CONDITIONS",
     270,
     88,
@@ -544,7 +544,7 @@ void drawWeatherScreen(
   String condition = weatherDescription(weatherCode);
   condition.toUpperCase();
   drawAACenteredInRect(
-    StarGuardItalic36AA,
+    MPDFontMediumAA,
     condition.c_str(),
     260,
     92,
@@ -585,7 +585,7 @@ void drawWeatherScreen(
     lastCheckedTime.c_str()
   );
   drawAAText(
-    StarGuardRegular20AA,
+    MPDFontSmallAA,
     lastCheckedText,
     70,
     307,
