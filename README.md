@@ -21,6 +21,8 @@ The current application retrieves weather from [Open-Meteo](https://open-meteo.c
 
 Open-Meteo does not require an API key. The current interface uses an LCARS-inspired theme and defaults to New York, NY.
 
+![MPD Weather display showing current New York conditions](docs/images/mpd-weather.png)
+
 Application folder:
 
 ```text
@@ -154,6 +156,9 @@ applications/
         ├── MPDAAFonts.h
         ├── TCCLogo46px.h
         └── secrets.example.h
+docs/
+└── images/
+    └── mpd-weather.png
 licenses/
 └── StarGuard-font-notice.txt
 tools/
