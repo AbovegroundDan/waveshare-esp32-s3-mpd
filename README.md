@@ -21,6 +21,8 @@ The current application retrieves weather from [Open-Meteo](https://open-meteo.c
 
 Open-Meteo does not require an API key. The current interface uses an LCARS-inspired theme and defaults to New York, NY.
 
+![MPD Weather display showing current New York conditions](docs/images/mpd-weather.png)
+
 Application folder:
 
 ```text
@@ -129,6 +131,20 @@ The Serial Monitor baud rate is **115200**. On startup, it reports Wi-Fi, clock 
 
 The application deliberately keeps the display SPI clock at **40 MHz** for this initial stable baseline. Higher SPI speeds have not yet been enabled.
 
+## Capture a screenshot
+
+The weather firmware can send one exact 480x320 screenshot to a Windows PC over USB serial. It temporarily redraws the latest weather screen into PSRAM, transfers the RGB565 pixels, frees the temporary framebuffer, and returns to normal display operation.
+
+Close Arduino Serial Monitor, then use the Python utility in [`tools/screenshot-capture`](tools/screenshot-capture/README.md):
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python -m pip install -r tools\screenshot-capture\requirements.txt
+.\.venv\Scripts\python tools\screenshot-capture\capture_screenshot.py --port COM5 --output mpd-weather.png
+```
+
+Change `COM5` if the board has a different port. The tool requests only one frame, validates its CRC32 checksum, writes the PNG, and exits. The live weather screen must already be loaded before capture.
+
 ## Repository layout
 
 ```text
@@ -140,11 +156,18 @@ applications/
         ├── MPDAAFonts.h
         ├── TCCLogo46px.h
         └── secrets.example.h
+docs/
+└── images/
+    └── mpd-weather.png
 licenses/
 └── StarGuard-font-notice.txt
 tools/
-└── font-converter/
-    ├── convert_font.py
+├── font-converter/
+│   ├── convert_font.py
+│   ├── README.md
+│   └── requirements.txt
+└── screenshot-capture/
+    ├── capture_screenshot.py
     ├── README.md
     └── requirements.txt
 ```
