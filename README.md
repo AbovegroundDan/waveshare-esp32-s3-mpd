@@ -18,6 +18,7 @@ The current application retrieves weather from [Open-Meteo](https://open-meteo.c
 - Precipitation probability
 - Last-checked time
 - A live clock for the configured location
+- A touch-accessible QR code linking to The Custom Corner YouTube channel
 
 Open-Meteo does not require an API key. The current interface uses an LCARS-inspired theme and defaults to New York, NY.
 
@@ -56,6 +57,7 @@ Use these versions for a reproducible setup:
 | GFX Library for Arduino | 1.6.7 |
 | TCA9554 by Rob Tillaart | 0.1.2 |
 | ArduinoJson | 7.4.3 |
+| SensorLib | 0.3.1 |
 
 Do not use the Arduino_GFX 1.5.5 copy bundled in Waveshare's original package with ESP32 core 3.3.11. That combination fails to compile because it uses an older `spiFrequencyToClockDiv()` API. Arduino_GFX 1.6.7 contains the required compatibility fix.
 
@@ -131,6 +133,10 @@ The Serial Monitor baud rate is **115200**. On startup, it reports Wi-Fi, clock 
 
 The application deliberately keeps the display SPI clock at **40 MHz** for this initial stable baseline. Higher SPI speeds have not yet been enabled.
 
+## Open the channel QR code
+
+Tap The Custom Corner logo in the upper-left corner of the weather display to open a QR code for the channel. The QR code is stored in the firmware and remains available when Wi-Fi or the weather service is unavailable. Tap anywhere on the QR screen to dismiss it and return to the weather display.
+
 ## Capture a screenshot
 
 The weather firmware can send one exact 480x320 screenshot to a Windows PC over USB serial. It temporarily redraws the latest weather screen into PSRAM, transfers the RGB565 pixels, frees the temporary framebuffer, and returns to normal display operation.
@@ -155,6 +161,7 @@ applications/
         ├── LocationConfig.h
         ├── MPDAAFonts.h
         ├── TCCLogo46px.h
+        ├── TCCChannelQR.h
         └── secrets.example.h
 docs/
 └── images/
@@ -184,7 +191,7 @@ The converter accepts TTF or OTF files, creates the four required anti-aliased f
 
 - Weather is the only application currently included.
 - The default location is New York, NY; it can be changed in `LocationConfig.h`.
-- Touch input is not used by the weather application yet.
+- Touching The Custom Corner logo opens the channel QR code; tapping the QR screen dismisses it.
 
 ## Licenses
 

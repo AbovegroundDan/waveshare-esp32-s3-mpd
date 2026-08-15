@@ -6,8 +6,10 @@
 #include <Wire.h>
 #include <time.h>
 #include "TCA9554.h"
+#include "TouchDrvFT6X36.hpp"
 #include "LocationConfig.h"
 #include "MPDAAFonts.h"
+#include "TCCChannelQR.h"
 #include "TCCLogo46px.h"
 #include "secrets.h"
 
@@ -54,8 +56,16 @@ constexpr size_t SCREENSHOT_BYTE_COUNT =
   static_cast<size_t>(SCREENSHOT_WIDTH) * SCREENSHOT_HEIGHT * sizeof(uint16_t);
 constexpr size_t SCREENSHOT_SERIAL_CHUNK_SIZE = 4096;
 constexpr char SCREENSHOT_COMMAND[] = "MPD_SCREENSHOT";
+constexpr int16_t LOGO_TOUCH_WIDTH = 80;
+constexpr int16_t LOGO_TOUCH_HEIGHT = 90;
+constexpr int16_t QR_MODAL_X =
+  (SCREENSHOT_WIDTH - TCC_CHANNEL_QR_PIXEL_SIZE) / 2;
+constexpr int16_t QR_MODAL_Y = 2;
+constexpr int16_t QR_MODAL_MESSAGE_Y = 268;
+constexpr int16_t QR_MODAL_MESSAGE_HEIGHT = 52;
 
 TCA9554 TCA(0x20);
+TouchDrvFT6X36 touch;
 
 Arduino_DataBus* bus = new Arduino_ESP32SPI(
   LCD_DC,
@@ -85,6 +95,9 @@ char lastHeaderClock[12] = "";
 uint16_t aaTextBuffer[AA_TEXT_BUFFER_WIDTH * AA_TEXT_BUFFER_HEIGHT];
 char serialCommandBuffer[32] = "";
 size_t serialCommandLength = 0;
+bool touchAvailable = false;
+bool touchWasDown = false;
+bool qrModalVisible = false;
 
 struct WeatherSnapshot {
   bool valid = false;
@@ -404,6 +417,10 @@ void drawHeader() {
 }
 
 void showStatus(const char* title, const char* detail, uint16_t color) {
+  if (qrModalVisible) {
+    return;
+  }
+
   drawHeader();
 
   gfx->fillRoundRect(74, 92, 390, 58, 20, color);
@@ -618,6 +635,167 @@ void drawWeatherScreen(
   );
 }
 
+void drawLatestWeatherScreen() {
+  if (!latestWeather.valid) {
+    showStatus(
+      "WEATHER UNAVAILABLE",
+      "WAITING FOR THE NEXT SUCCESSFUL UPDATE...",
+      LCARS_RED
+    );
+    return;
+  }
+
+  drawWeatherScreen(
+    latestWeather.temperature,
+    latestWeather.apparentTemperature,
+    latestWeather.humidity,
+    latestWeather.weatherCode,
+    latestWeather.windSpeed,
+    latestWeather.highTemperature,
+    latestWeather.lowTemperature,
+    latestWeather.rainChance,
+    latestWeather.lastCheckedTime
+  );
+}
+
+void drawChannelQrCode(int16_t x, int16_t y) {
+  gfx->fillRect(
+    x,
+    y,
+    TCC_CHANNEL_QR_PIXEL_SIZE,
+    TCC_CHANNEL_QR_PIXEL_SIZE,
+    RGB565_WHITE
+  );
+
+  const int16_t firstModuleX = x +
+    (TCC_CHANNEL_QR_QUIET_ZONE * TCC_CHANNEL_QR_MODULE_SCALE);
+  const int16_t firstModuleY = y +
+    (TCC_CHANNEL_QR_QUIET_ZONE * TCC_CHANNEL_QR_MODULE_SCALE);
+
+  for (uint8_t row = 0; row < TCC_CHANNEL_QR_MODULE_COUNT; ++row) {
+    uint32_t rowBits = pgm_read_dword(&TCCChannelQRRows[row]);
+    int8_t runStart = -1;
+
+    for (uint8_t column = 0; column <= TCC_CHANNEL_QR_MODULE_COUNT; ++column) {
+      bool moduleIsBlack = false;
+      if (column < TCC_CHANNEL_QR_MODULE_COUNT) {
+        uint8_t bitIndex = TCC_CHANNEL_QR_MODULE_COUNT - 1 - column;
+        moduleIsBlack = (rowBits & (1UL << bitIndex)) != 0;
+      }
+
+      if (moduleIsBlack && runStart < 0) {
+        runStart = column;
+      } else if (!moduleIsBlack && runStart >= 0) {
+        gfx->fillRect(
+          firstModuleX + (runStart * TCC_CHANNEL_QR_MODULE_SCALE),
+          firstModuleY + (row * TCC_CHANNEL_QR_MODULE_SCALE),
+          (column - runStart) * TCC_CHANNEL_QR_MODULE_SCALE,
+          TCC_CHANNEL_QR_MODULE_SCALE,
+          RGB565_BLACK
+        );
+        runStart = -1;
+      }
+    }
+  }
+}
+
+void drawChannelQrModal() {
+  gfx->fillScreen(LCARS_BLACK);
+  drawChannelQrCode(QR_MODAL_X, QR_MODAL_Y);
+  drawAACenteredInRect(
+    MPDFontSmallAA,
+    "TAP ANYWHERE TO DISMISS",
+    0,
+    QR_MODAL_MESSAGE_Y,
+    SCREENSHOT_WIDTH,
+    QR_MODAL_MESSAGE_HEIGHT,
+    LCARS_WHITE,
+    LCARS_BLACK
+  );
+}
+
+bool readLandscapeTouch(int16_t& screenX, int16_t& screenY) {
+  if (!touchAvailable) {
+    return false;
+  }
+
+  constexpr uint8_t TOUCH_REGISTER_BYTES = 5;
+  Wire.beginTransmission(FT6X36_SLAVE_ADDRESS);
+  Wire.write(FT6X36_REG_STATUS);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  if (
+    Wire.requestFrom(FT6X36_SLAVE_ADDRESS, TOUCH_REGISTER_BYTES) !=
+    TOUCH_REGISTER_BYTES
+  ) {
+    while (Wire.available()) {
+      Wire.read();
+    }
+    return false;
+  }
+
+  uint8_t pointCount = Wire.read() & 0x0F;
+  uint8_t touchXHigh = Wire.read();
+  uint8_t touchXLow = Wire.read();
+  uint8_t touchYHigh = Wire.read();
+  uint8_t touchYLow = Wire.read();
+  uint8_t eventFlag = (touchXHigh >> 6) & 0x03;
+
+  // SensorLib 0.3.1's getPoint() checks only pointCount and ignores this
+  // event flag. The FT6336 may still report one point for its PUT_UP event,
+  // which otherwise leaves edge-triggered taps latched until another cycle.
+  if (
+    pointCount == 0 ||
+    pointCount == 0x0F ||
+    eventFlag == TouchDrvFT6X36::EVENT_PUT_UP ||
+    eventFlag == TouchDrvFT6X36::EVENT_NONE
+  ) {
+    return false;
+  }
+
+  int16_t rawX = ((touchXHigh & 0x0F) << 8) | touchXLow;
+  int16_t rawY = ((touchYHigh & 0x0F) << 8) | touchYLow;
+
+  // The FT6336 reports portrait coordinates. Rotation 1 displays landscape,
+  // so apply the same clockwise transform used by Arduino_GFX.
+  screenX = rawY;
+  screenY = (LCD_HOR_RES - 1) - rawX;
+
+  return screenX >= 0 && screenX < SCREENSHOT_WIDTH &&
+    screenY >= 0 && screenY < SCREENSHOT_HEIGHT;
+}
+
+void pollTouch() {
+  int16_t screenX = 0;
+  int16_t screenY = 0;
+  bool touchIsDown = readLandscapeTouch(screenX, screenY);
+
+  if (touchIsDown && !touchWasDown) {
+    Serial.printf("Touch X:%d Y:%d\n", screenX, screenY);
+
+    if (qrModalVisible) {
+      qrModalVisible = false;
+      drawLatestWeatherScreen();
+      Serial.println("Channel QR code dismissed");
+      touchWasDown = readLandscapeTouch(screenX, screenY);
+      return;
+    } else if (
+      screenX < LOGO_TOUCH_WIDTH &&
+      screenY < LOGO_TOUCH_HEIGHT
+    ) {
+      qrModalVisible = true;
+      drawChannelQrModal();
+      Serial.println("Channel QR code displayed");
+      touchWasDown = readLandscapeTouch(screenX, screenY);
+      return;
+    }
+  }
+
+  touchWasDown = touchIsDown;
+}
+
 uint32_t calculateScreenshotCrc32(const uint8_t* data, size_t length) {
   uint32_t crc = 0xFFFFFFFFu;
 
@@ -673,17 +851,11 @@ void streamScreenshot() {
 
   Arduino_GFX* normalDisplayTarget = gfx;
   gfx = screenshotCanvas;
-  drawWeatherScreen(
-    latestWeather.temperature,
-    latestWeather.apparentTemperature,
-    latestWeather.humidity,
-    latestWeather.weatherCode,
-    latestWeather.windSpeed,
-    latestWeather.highTemperature,
-    latestWeather.lowTemperature,
-    latestWeather.rainChance,
-    latestWeather.lastCheckedTime
-  );
+  if (qrModalVisible) {
+    drawChannelQrModal();
+  } else {
+    drawLatestWeatherScreen();
+  }
   gfx = normalDisplayTarget;
 
   uint8_t* framebufferBytes = reinterpret_cast<uint8_t*>(
@@ -710,11 +882,13 @@ void streamScreenshot() {
 
   delete screenshotCanvas;
 
-  // Rendering the off-screen header updates the clock bookkeeping. Force the
-  // physical title bar to catch up before normal loop processing resumes.
-  lastHeaderClock[0] = '\0';
-  lastHeaderClockRefresh = 0;
-  updateHeaderClock(true);
+  if (!qrModalVisible) {
+    // Rendering the off-screen header updates the clock bookkeeping. Force the
+    // physical title bar to catch up before normal loop processing resumes.
+    lastHeaderClock[0] = '\0';
+    lastHeaderClockRefresh = 0;
+    updateHeaderClock(true);
+  }
 
   Serial.printf("Free PSRAM after capture: %u bytes\n", ESP.getFreePsram());
   Serial.println("Screenshot transfer completed");
@@ -857,17 +1031,9 @@ bool fetchAndDisplayWeather() {
   );
   latestWeather.valid = true;
 
-  drawWeatherScreen(
-    latestWeather.temperature,
-    latestWeather.apparentTemperature,
-    latestWeather.humidity,
-    latestWeather.weatherCode,
-    latestWeather.windSpeed,
-    latestWeather.highTemperature,
-    latestWeather.lowTemperature,
-    latestWeather.rainChance,
-    latestWeather.lastCheckedTime
-  );
+  if (!qrModalVisible) {
+    drawLatestWeatherScreen();
+  }
 
   Serial.println("Weather data parsed and displayed");
   return true;
@@ -906,6 +1072,13 @@ void setup() {
 
   digitalWrite(GFX_BL, HIGH);
 
+  touchAvailable = touch.begin(Wire, FT6X36_SLAVE_ADDRESS);
+  if (touchAvailable) {
+    Serial.println("FT6336 touch initialized");
+  } else {
+    Serial.println("WARNING: FT6336 touch controller not detected");
+  }
+
   if (connectToWiFi()) {
     updateWeather();
   }
@@ -913,6 +1086,7 @@ void setup() {
 
 void loop() {
   pollSerialCommands();
+  pollTouch();
 
   if (WiFi.status() != WL_CONNECTED) {
     if (millis() - lastConnectionAttempt >= WIFI_RETRY_INTERVAL_MS) {
@@ -924,7 +1098,9 @@ void loop() {
     updateWeather();
   }
 
-  updateHeaderClock();
+  if (!qrModalVisible) {
+    updateHeaderClock();
+  }
 
-  delay(250);
+  delay(20);
 }
